@@ -367,12 +367,15 @@ if __name__ == "__main__":
     
     """Streaming Conversion"""
     ### offline inference
-    x = torch.from_numpy(sf.read('test_wavs/mix.wav', dtype='float32')[0])
-    x = torch.stft(x, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=False)[None]
+    window = torch.hann_window(512).pow(0.5)
+    x = torch.from_numpy(sf.read('test_wavs/noisy_16k/00003_1_fan_noise_level1_snr+5dB_noisy.wav', dtype='float32')[0])
+    x = torch.stft(x, 512, 256, 512, window, return_complex=False)[None]  # (1, F, T, 2)
     with torch.no_grad():
-        y = model(x)
-    y = torch.istft(y, 512, 256, 512, torch.hann_window(512).pow(0.5)).detach().cpu().numpy()
-    sf.write('test_wavs/enh.wav', y.squeeze(), 16000)
+        y = model(x)  # (1, F, T, 2) - last dim is real/imag
+    # 转换为复数张量: (1, F, T, 2) -> (F, T) complex
+    y_complex = torch.complex(y[0, :, :, 0], y[0, :, :, 1])  # (F, T)
+    y = torch.istft(y_complex, 512, 256, 512, window).detach().cpu().numpy()
+    sf.write('test_wavs/00003_1_fan_noise_level1_snr+5dB_noisy.wav', y.squeeze(), 16000)
     
     ### online (streaming) inference
     conv_cache = torch.zeros(2, 1, 16, 16, 33).to(device)
@@ -396,65 +399,64 @@ if __name__ == "__main__":
     # print(">>> Streaming error:", np.abs(y-ys).max())
 
 
-    """ONNX Conversion"""
-    import os
-    import time
-    import onnx
-    import onnxruntime
-    from onnxsim import simplify
-    from librosa import istft
+    # """ONNX Conversion"""
+    # import os
+    # import time
+    # import onnx
+    # import onnxruntime
+    # from onnxsim import simplify
+    # from librosa import istft
     
-    ## convert to onnx
-    file = 'onnx_models/gtcrn.onnx'
-    if not os.path.exists(file):
-        input = torch.randn(1, 257, 1, 2, device=device)
-        torch.onnx.export(stream_model,
-                        (input, conv_cache, tra_cache, inter_cache),
-                        file,
-                        input_names = ['mix', 'conv_cache', 'tra_cache', 'inter_cache'],
-                        output_names = ['enh', 'conv_cache_out', 'tra_cache_out', 'inter_cache_out'],
-                        opset_version=11,
-                        verbose = False)
+    # ## convert to onnx
+    # file = 'onnx_models/gtcrn.onnx'
+    # if not os.path.exists(file):
+    #     input = torch.randn(1, 257, 1, 2, device=device)
+    #     torch.onnx.export(stream_model,
+    #                     (input, conv_cache, tra_cache, inter_cache),
+    #                     file,
+    #                     input_names = ['mix', 'conv_cache', 'tra_cache', 'inter_cache'],
+    #                     output_names = ['enh', 'conv_cache_out', 'tra_cache_out', 'inter_cache_out'],
+    #                     opset_version=11,
+    #                     verbose = False)
 
-        onnx_model = onnx.load(file)
-        onnx.checker.check_model(onnx_model)
+    #     onnx_model = onnx.load(file)
+    #     onnx.checker.check_model(onnx_model)
 
-    # simplify onnx model
-    if not os.path.exists(file.split('.onnx')[0]+'_simple.onnx'):
-        model_simp, check = simplify(onnx_model)
-        assert check, "Simplified ONNX model could not be validated"
-        onnx.save(model_simp, file.split('.onnx')[0] + '_simple.onnx')
+    # # simplify onnx model
+    # if not os.path.exists(file.split('.onnx')[0]+'_simple.onnx'):
+    #     model_simp, check = simplify(onnx_model)
+    #     assert check, "Simplified ONNX model could not be validated"
+    #     onnx.save(model_simp, file.split('.onnx')[0] + '_simple.onnx')
 
 
-    ## run onnx model
-    # session = onnxruntime.InferenceSession(file, None, providers=['CPUExecutionProvider'])
-    session = onnxruntime.InferenceSession(file.split('.onnx')[0]+'_simple.onnx', None, providers=['CPUExecutionProvider'])
-    conv_cache = np.zeros([2, 1, 16, 16, 33],  dtype="float32")
-    tra_cache = np.zeros([2, 3, 1, 1, 16],  dtype="float32")
-    inter_cache = np.zeros([2, 1, 33, 16],  dtype="float32")
+    # ## run onnx model
+    # # session = onnxruntime.InferenceSession(file, None, providers=['CPUExecutionProvider'])
+    # session = onnxruntime.InferenceSession(file.split('.onnx')[0]+'_simple.onnx', None, providers=['CPUExecutionProvider'])
+    # conv_cache = np.zeros([2, 1, 16, 16, 33],  dtype="float32")
+    # tra_cache = np.zeros([2, 3, 1, 1, 16],  dtype="float32")
+    # inter_cache = np.zeros([2, 1, 33, 16],  dtype="float32")
 
-    T_list = []
-    outputs = []
+    # T_list = []
+    # outputs = []
 
-    inputs = x.numpy()
-    for i in tqdm(range(inputs.shape[-2])):
-        tic = time.perf_counter()
+    # inputs = x.numpy()
+    # for i in tqdm(range(inputs.shape[-2])):
+    #     tic = time.perf_counter()
         
-        out_i,  conv_cache, tra_cache, inter_cache \
-                = session.run([], {'mix': inputs[..., i:i+1, :],
-                    'conv_cache': conv_cache,
-                    'tra_cache': tra_cache,
-                    'inter_cache': inter_cache})
+    #     out_i,  conv_cache, tra_cache, inter_cache \
+    #             = session.run([], {'mix': inputs[..., i:i+1, :],
+    #                 'conv_cache': conv_cache,
+    #                 'tra_cache': tra_cache,
+    #                 'inter_cache': inter_cache})
 
-        toc = time.perf_counter()
-        T_list.append(toc-tic)
-        outputs.append(out_i)
+    #     toc = time.perf_counter()
+    #     T_list.append(toc-tic)
+    #     outputs.append(out_i)
 
-    outputs = np.concatenate(outputs, axis=2)
-    enhanced = istft(outputs[...,0] + 1j * outputs[...,1], n_fft=512, hop_length=256, win_length=512, window=np.hanning(512)**0.5)
-    sf.write('test_wavs/enh_onnx.wav', enhanced.squeeze(), 16000)
+    # outputs = np.concatenate(outputs, axis=2)
+    # enhanced = istft(outputs[...,0] + 1j * outputs[...,1], n_fft=512, hop_length=256, win_length=512, window=np.hanning(512)**0.5)
+    # sf.write('test_wavs/enh_onnx.wav', enhanced.squeeze(), 16000)
     
-    print(">>> Onnx error:", np.abs(y - enhanced).max())
-    print(">>> inference time: mean: {:.1f}ms, max: {:.1f}ms, min: {:.1f}ms".format(1e3*np.mean(T_list), 1e3*np.max(T_list), 1e3*np.min(T_list)))
-    print(">>> RTF:", 1e3*np.mean(T_list) / 16)
-
+    # print(">>> Onnx error:", np.abs(y - enhanced).max())
+    # print(">>> inference time: mean: {:.1f}ms, max: {:.1f}ms, min: {:.1f}ms".format(1e3*np.mean(T_list), 1e3*np.max(T_list), 1e3*np.min(T_list)))
+    # print(">>> RTF:", 1e3*np.mean(T_list) / 16)
