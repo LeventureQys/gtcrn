@@ -349,38 +349,76 @@ class StreamGTCRN(nn.Module):
 
         return spec_enh, conv_cache, tra_cache, inter_cache
 
-
+import os
+import time
+import torch  # 补充缺失的torch导入
+import soundfile as sf
+from tqdm import tqdm
+from gtcrn import GTCRN
+from modules.convert import convert_to_stream
 if __name__ == "__main__":
-    import os
-    import time
-    import soundfile as sf
-    from tqdm import tqdm
-    from gtcrn import GTCRN
-    from modules.convert import convert_to_stream
+    # 配置路径
+    input_dir = "test_wavs/noisy_16k"  # 输入wav文件目录
+    output_dir = "test_wavs/output"  # 输出文件保存目录
+    model_path = "onnx_models/model_trained_on_dns3.tar"  # 模型文件路径
     
+    # 创建输出目录（如果不存在）
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 设置设备
     device = torch.device("cpu")
 
+    # 加载模型并设置为评估模式
     model = GTCRN().to(device).eval()
-    model.load_state_dict(torch.load('onnx_models/model_trained_on_dns3.tar', map_location=device)['model'])
+    model.load_state_dict(torch.load(model_path, map_location=device)['model'])
+    
+    # 转换为流式模型
     stream_model = StreamGTCRN().to(device).eval()
     convert_to_stream(stream_model, model)
     
-    """Streaming Conversion"""
-    ### offline inference
+    # 定义STFT/ISTFT参数
     window = torch.hann_window(512).pow(0.5)
-    x = torch.from_numpy(sf.read('test_wavs/noisy_16k/00003_1_fan_noise_level1_snr+5dB_noisy.wav', dtype='float32')[0])
-    x = torch.stft(x, 512, 256, 512, window, return_complex=False)[None]  # (1, F, T, 2)
-    with torch.no_grad():
-        y = model(x)  # (1, F, T, 2) - last dim is real/imag
-    # 转换为复数张量: (1, F, T, 2) -> (F, T) complex
-    y_complex = torch.complex(y[0, :, :, 0], y[0, :, :, 1])  # (F, T)
-    y = torch.istft(y_complex, 512, 256, 512, window).detach().cpu().numpy()
-    sf.write('test_wavs/00003_1_fan_noise_level1_snr+5dB_noisy.wav', y.squeeze(), 16000)
+    
+    # 获取目录下所有wav文件
+    wav_files = [f for f in os.listdir(input_dir) if f.lower().endswith('.wav')]
+    
+    # 遍历并处理每个wav文件
+    for filename in tqdm(wav_files, desc="Processing WAV files"):
+        try:
+            # 拼接完整的输入文件路径
+            input_path = os.path.join(input_dir, filename)
+            # 拼接完整的输出文件路径
+            output_path = os.path.join(output_dir, filename)
+            
+            # 读取音频文件
+            audio_data, sr = sf.read(input_path, dtype='float32')
+            assert sr == 16000, f"采样率必须为16000，当前文件{filename}采样率为{sr}"
+            
+            # 离线推理
+            x = torch.from_numpy(audio_data)
+            # STFT转换：(T) -> (1, F, T, 2)
+            x = torch.stft(x, 512, 256, 512, window, return_complex=False)[None]
+            
+            with torch.no_grad():
+                y = model(x)  # 模型推理，输出(1, F, T, 2)
+            
+            # 转换为复数张量并进行ISTFT逆变换
+            y_complex = torch.complex(y[0, :, :, 0], y[0, :, :, 1])  # (F, T)
+            y = torch.istft(y_complex, 512, 256, 512, window).detach().cpu().numpy()
+            
+            # 保存处理后的音频文件
+            sf.write(output_path, y.squeeze(), 16000)
+            
+        except Exception as e:
+            print(f"处理文件 {filename} 时出错: {str(e)}")
+            continue
+
+    print(f"所有文件处理完成！输出文件保存在: {output_dir}")
     
     ### online (streaming) inference
-    conv_cache = torch.zeros(2, 1, 16, 16, 33).to(device)
-    tra_cache = torch.zeros(2, 3, 1, 1, 16).to(device)
-    inter_cache = torch.zeros(2, 1, 33, 16).to(device)
+    # conv_cache = torch.zeros(2, 1, 16, 16, 33).to(device)
+    # tra_cache = torch.zeros(2, 3, 1, 1, 16).to(device)
+    # inter_cache = torch.zeros(2, 1, 33, 16).to(device)
     # ys = []
     # times = []
     # for i in tqdm(range(x.shape[2])):
