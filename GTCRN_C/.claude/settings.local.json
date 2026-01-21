@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build:*)",
+      "Bash(cmake:*)",
+      "Bash(findstr:*)",
+      "Bash(\"D:\\WorkShop\\gtcrn-project\\gtcrn\\GTCRN_C\\build\\Debug\\gtcrn_stream_demo.exe\":*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+CC = gcc
+CFLAGS = -Wall -O2 -std=c99
+LDFLAGS = -lm
+
+SOURCES = conv2d.c conv_transpose2d_example.c
+OBJECTS = $(SOURCES:.c=.o)
+TARGET = conv_transpose2d_example
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OBJECTS) $(TARGET) $(TARGET).exe
+
+run: $(TARGET)
+	./$(TARGET)
+
+.PHONY: all clean run

@@ -1,0 +1,23 @@
+CC = gcc
+CFLAGS = -Wall -O2 -std=c99
+LDFLAGS = -lm
+
+SOURCES = conv2d.c nn_layers.c gtcrn_modules.c test_gtcrn_modules.c
+OBJECTS = $(SOURCES:.c=.o)
+TARGET = test_gtcrn_modules
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OBJECTS) $(TARGET) $(TARGET).exe
+
+run: $(TARGET)
+	./$(TARGET)
+
+.PHONY: all clean run
